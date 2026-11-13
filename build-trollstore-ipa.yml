@@ -1,0 +1,62 @@
+name: Build TrollStore IPA
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'GameBoxDeluxe15.zip'
+      - 'GameBoxDeluxe15/**'
+      - 'GameBoxDeluxe15.xcodeproj/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Unpack project zip if needed
+        run: |
+          if ! find . -name "GameBoxDeluxe15.xcodeproj" -maxdepth 4 | grep -q .; then
+            ZIP=$(ls *.zip 2>/dev/null | head -1)
+            if [ -z "$ZIP" ]; then
+              echo "no zip" >&2
+              exit 1
+            fi
+            unzip -o "$ZIP"
+          fi
+          PROJ=$(find . -name "GameBoxDeluxe15.xcodeproj" -maxdepth 4 | head -1)
+          echo "PROJ_PATH=$PROJ" >> "$GITHUB_ENV"
+      - name: Show Xcode version
+        run: xcodebuild -version
+      - name: Build unsigned app
+        run: |
+          set -o pipefail
+          xcodebuild -project "$PROJ_PATH" -scheme GameBoxDeluxe15 -configuration Release -sdk iphoneos -derivedDataPath "$RUNNER_TEMP/DerivedData" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build 2>&1 | tee "$RUNNER_TEMP/build.log"
+      - name: Package TrollStore IPA
+        run: |
+          APP=$(find "$RUNNER_TEMP/DerivedData/Build/Products" -name "GameBoxDeluxe15.app" -maxdepth 2 | head -1)
+          if [ -z "$APP" ]; then
+            echo "no app" >&2
+            exit 1
+          fi
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry GameBoxDeluxe15.tipa Payload
+          cp GameBoxDeluxe15.tipa GameBoxDeluxe15.ipa
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: GameBoxDeluxe15-tipa
+          path: |
+            GameBoxDeluxe15.tipa
+            GameBoxDeluxe15.ipa
+          if-no-files-found: error
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: ${{ runner.temp }}/build.log
+          if-no-files-found: ignore
